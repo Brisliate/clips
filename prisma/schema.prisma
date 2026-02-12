@@ -1,0 +1,253 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User model for authentication
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  password      String?   // For email/password auth
+  role          UserRole  @default(CREATOR)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  accounts      Account[]
+  sessions      Session[]
+  profile       Profile?
+  campaigns     Campaign[] @relation("BrandCampaigns")
+  submissions   Submission[]
+  wallet        Wallet?
+  transactions  Transaction[]
+
+  @@map("users")
+}
+
+// NextAuth Account model
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+// NextAuth Session model
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+// NextAuth VerificationToken model
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+enum UserRole {
+  ADMIN
+  BRAND
+  CREATOR
+}
+
+// User Profile with creator/brand specific info
+model Profile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Creator fields
+  niche       String?  // e.g., "Fashion", "Tech", "Gaming"
+  platforms   String[] // e.g., ["TikTok", "Instagram", "YouTube"]
+  followers   Int      @default(0)
+  bio         String?  @db.Text
+  
+  // Brand fields
+  companyName String?
+  website     String?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("profiles")
+}
+
+// Campaign model
+model Campaign {
+  id              String          @id @default(cuid())
+  brandId         String
+  brand           User            @relation("BrandCampaigns", fields: [brandId], references: [id], onDelete: Cascade)
+  
+  title           String
+  description     String          @db.Text
+  platform        Platform
+  cpmRate         Float           // $ per 1000 views
+  maxBudget       Float
+  currentSpend    Float           @default(0)
+  contentGuidelines String?       @db.Text
+  expirationDate  DateTime
+  status          CampaignStatus  @default(ACTIVE)
+  
+  // Filters for creators
+  minFollowers    Int?            @default(0)
+  requiredNiche   String?
+  
+  submissions     Submission[]
+  viewTrackings   ViewTracking[]
+  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@map("campaigns")
+}
+
+enum Platform {
+  TIKTOK
+  INSTAGRAM_REELS
+  YOUTUBE_SHORTS
+  ALL
+}
+
+enum CampaignStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  EXPIRED
+  CANCELLED
+}
+
+// Submission model
+model Submission {
+  id          String            @id @default(cuid())
+  campaignId  String
+  campaign    Campaign          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  creatorId   String
+  creator     User              @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  
+  videoUrl    String?           // External link
+  videoKey    String?           // S3/Uploadthing key
+  status      SubmissionStatus  @default(PENDING)
+  notes       String?           @db.Text
+  
+  viewTrackings ViewTracking[]
+  
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@map("submissions")
+}
+
+enum SubmissionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// View tracking model
+model ViewTracking {
+  id            String     @id @default(cuid())
+  submissionId  String
+  submission    Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  campaignId    String
+  campaign      Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  
+  viewCount     Int        @default(0)
+  trackedAt     DateTime   @default(now())
+  
+  // For future automated tracking
+  source        String?    // "manual", "api", "automated"
+  
+  @@map("view_trackings")
+}
+
+// Wallet model
+model Wallet {
+  id            String        @id @default(cuid())
+  userId        String        @unique
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  balance       Float         @default(0) // Available balance
+  pendingBalance Float        @default(0) // Pending approval
+  totalEarned   Float         @default(0) // Lifetime earnings
+  
+  transactions  Transaction[]
+  
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@map("wallets")
+}
+
+// Transaction model
+model Transaction {
+  id            String            @id @default(cuid())
+  walletId     String
+  wallet       Wallet            @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  type         TransactionType
+  amount       Float
+  status       TransactionStatus @default(PENDING)
+  
+  // Related entities
+  campaignId   String?
+  submissionId String?
+  
+  // Stripe
+  stripePaymentIntentId String?
+  stripePayoutId        String?
+  
+  description  String?           @db.Text
+  
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@map("transactions")
+}
+
+enum TransactionType {
+  DEPOSIT      // Brand deposits to escrow
+  EARNINGS     // Creator earns from views
+  PAYOUT       // Creator withdraws
+  REFUND       // Refund to brand
+}
+
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
